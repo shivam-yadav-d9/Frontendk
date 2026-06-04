@@ -1,37 +1,180 @@
-import { useState } from "react";
+import { MaterialIcons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as Location from "expo-location";
 import { router } from "expo-router";
+import { useEffect, useState } from "react";
 import {
-  View,
+  Alert,
+  Image,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
-  StyleSheet,
-  Alert,
-  Image,
-  StatusBar,
-  ScrollView,
+  View,
 } from "react-native";
-import { MaterialIcons } from "@expo/vector-icons";
+import {
+  MAX_DISTANCE,
+  OFFICE_LOCATION,
+  calculateDistance,
+} from "../utils/location";
 
 export default function LoginScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [role, setRole] = useState("staff");
+  const [checking, setChecking] = useState(false);
+  useEffect(() => {
+  checkExistingLogin();
+}, []);
 
-  const login = () => {
-    if (
-      email === "shivam.yadav@hometown.in" &&
-      password === "staff123"
-    ) {
-      Alert.alert("Success", "Login Successful");
+const checkExistingLogin = async () => {
+  try {
+    const token = await AsyncStorage.getItem("userToken");
 
+    if (token) {
       router.replace("/(tabs)/home");
-    } else {
+    }
+  } catch (error) {
+    console.log(error);
+  }
+};
+
+  // ─── Auto-login when user re-enters office range ───────────────────────────
+  useEffect(() => {
+    let subscription;
+
+    const startWatching = async () => {
+      const { status } = await Location.getForegroundPermissionsAsync();
+      if (status !== "granted") return;
+
+      const saved = await AsyncStorage.getItem("savedCredentials");
+      if (!saved) return;
+
+      subscription = await Location.watchPositionAsync(
+        {
+          accuracy: Location.Accuracy.High,
+          timeInterval: 5000,
+          distanceInterval: 5,
+        },
+        async (location) => {
+          const dist = calculateDistance(
+            location.coords.latitude,
+            location.coords.longitude,
+            OFFICE_LOCATION.latitude,
+            OFFICE_LOCATION.longitude
+          );
+
+          if (dist <= MAX_DISTANCE) {
+            try {
+              const { email: savedEmail, password: savedPassword } =
+                JSON.parse(saved);
+
+              // Validate saved credentials (update these to match your real staff credentials)
+              if (
+                savedEmail !== "shivam.yadav@hometown.in" ||
+                savedPassword !== "staff123"
+              ) {
+                return;
+              }
+
+              await AsyncStorage.setItem("userToken", "logged_in");
+              if (subscription) subscription.remove();
+              router.replace("/(tabs)/home");
+            } catch (e) {
+              console.log("Auto login error:", e);
+            }
+          }
+        }
+      );
+    };
+
+    startWatching();
+
+    return () => {
+      if (subscription) subscription.remove();
+    };
+  }, []);
+
+  // ─── Manual Login ──────────────────────────────────────────────────────────
+  const login = async () => {
+    // 1. Validate credentials
+    const validEmail =
+      role === "staff"
+        ? "shivam.yadav@hometown.in"
+        : "manager@hometown.in";
+    const validPassword = role === "staff" ? "staff123" : "manager123";
+
+    if (email !== validEmail || password !== validPassword) {
       Alert.alert("Login Failed", "Invalid Email or Password");
+      return;
+    }
+
+    // 2. Request foreground location permission
+    const { status: fgStatus } =
+      await Location.requestForegroundPermissionsAsync();
+    if (fgStatus !== "granted") {
+      Alert.alert("Permission Required", "Please allow location access.");
+      return;
+    }
+
+    // 3. Request background location permission
+    const { status: bgStatus } =
+      await Location.requestBackgroundPermissionsAsync();
+    if (bgStatus !== "granted") {
+      Alert.alert(
+        "Background Location Required",
+        "Please select 'Always Allow' for location to enable auto login/logout."
+      );
+      return;
+    }
+
+    // 4. Get current location and verify office range
+    try {
+      setChecking(true);
+
+      const location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Highest,
+      });
+
+      const distance = calculateDistance(
+        location.coords.latitude,
+        location.coords.longitude,
+        OFFICE_LOCATION.latitude,
+        OFFICE_LOCATION.longitude
+      );
+
+      console.log("Distance from office:", distance, "m");
+
+      if (distance > MAX_DISTANCE) {
+        Alert.alert(
+          "Access Denied",
+          `You are ${Math.round(distance)} meters away from the office. Please be on-site to log in.`
+        );
+        setChecking(false);
+        return;
+      }
+
+      // 5. Save credentials & token, then navigate
+      await AsyncStorage.setItem(
+        "savedCredentials",
+        JSON.stringify({ email, password })
+      );
+      await AsyncStorage.setItem("userToken", "logged_in");
+
+      Alert.alert("Success", "Login Successful");
+      router.replace("/(tabs)/home");
+    } catch (error) {
+      console.log(error);
+      Alert.alert("Location Error", "Unable to get current location.");
+    } finally {
+      setChecking(false);
     }
   };
 
+  // ─── UI ────────────────────────────────────────────────────────────────────
   return (
     <ScrollView
       contentContainerStyle={styles.container}
@@ -70,7 +213,9 @@ export default function LoginScreen() {
         <Text style={styles.portal}>TEAM PORTAL</Text>
         <Text style={styles.heading}>Staff Login</Text>
         <Text style={styles.subHeading}>
-          Access attendance, learning, assignments and targets.
+          {checking
+            ? "Verifying your location…"
+            : "Access attendance, learning, assignments and targets."}
         </Text>
 
         {/* Role Toggle */}
@@ -84,13 +229,21 @@ export default function LoginScreen() {
               size={17}
               color={role === "staff" ? "#fff" : "#555"}
             />
-            <Text style={[styles.toggleText, role === "staff" && styles.toggleTextActive]}>
+            <Text
+              style={[
+                styles.toggleText,
+                role === "staff" && styles.toggleTextActive,
+              ]}
+            >
               Staff
             </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.toggleBtn, role === "manager" && styles.toggleActive]}
+            style={[
+              styles.toggleBtn,
+              role === "manager" && styles.toggleActive,
+            ]}
             onPress={() => setRole("manager")}
           >
             <MaterialIcons
@@ -98,7 +251,12 @@ export default function LoginScreen() {
               size={17}
               color={role === "manager" ? "#fff" : "#555"}
             />
-            <Text style={[styles.toggleText, role === "manager" && styles.toggleTextActive]}>
+            <Text
+              style={[
+                styles.toggleText,
+                role === "manager" && styles.toggleTextActive,
+              ]}
+            >
               Manager
             </Text>
           </TouchableOpacity>
@@ -109,7 +267,11 @@ export default function LoginScreen() {
         <View style={styles.inputContainer}>
           <MaterialIcons name="email" size={20} color="#D96A17" />
           <TextInput
-            placeholder={role === "staff" ? "staff@hometown.com" : "manager@hometown.com"}
+            placeholder={
+              role === "staff"
+                ? "staff@hometown.com"
+                : "manager@hometown.com"
+            }
             value={email}
             onChangeText={setEmail}
             style={styles.input}
@@ -138,9 +300,23 @@ export default function LoginScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* Location notice */}
+        <View style={styles.locationNote}>
+          <MaterialIcons name="location-on" size={14} color="#D96A17" />
+          <Text style={styles.locationText}>
+            Location verification required at office premises
+          </Text>
+        </View>
+
         {/* Login Button */}
-        <TouchableOpacity style={styles.loginBtn} onPress={login}>
-          <Text style={styles.loginText}>Open Staff Dashboard →</Text>
+        <TouchableOpacity
+          style={[styles.loginBtn, checking && styles.loginBtnDisabled]}
+          onPress={login}
+          disabled={checking}
+        >
+          <Text style={styles.loginText}>
+            {checking ? "Verifying Location…" : "Open Staff Dashboard →"}
+          </Text>
         </TouchableOpacity>
 
         <Text style={styles.footerText}>
@@ -160,7 +336,10 @@ export default function LoginScreen() {
 
         <View style={styles.policyRow}>
           <MaterialIcons name="security" size={12} color="#D96A17" />
-          <Text style={styles.policy}> Secure Login • Terms of Service • Privacy Policy</Text>
+          <Text style={styles.policy}>
+            {" "}
+            Secure Login • Terms of Service • Privacy Policy
+          </Text>
         </View>
 
         <Text style={styles.quote}>
@@ -310,13 +489,35 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
 
+  locationNote: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFF4EC",
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    marginTop: 12,
+    gap: 6,
+  },
+
+  locationText: {
+    fontSize: 11,
+    color: "#D96A17",
+    fontWeight: "500",
+    flex: 1,
+  },
+
   loginBtn: {
     backgroundColor: "#D96A17",
     height: 48,
     borderRadius: 14,
     justifyContent: "center",
     alignItems: "center",
-    marginTop: 16,
+    marginTop: 14,
+  },
+
+  loginBtnDisabled: {
+    backgroundColor: "#E8A97A",
   },
 
   loginText: {
