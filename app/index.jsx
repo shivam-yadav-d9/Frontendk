@@ -4,6 +4,7 @@ import * as Location from "expo-location";
 import { router } from "expo-router";
 import { useEffect, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   Image,
   ScrollView,
@@ -14,6 +15,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import authService from "../services/auth.service";
 import {
   MAX_DISTANCE,
   OFFICE_LOCATION,
@@ -21,28 +23,29 @@ import {
 } from "../utils/location";
 
 export default function LoginScreen() {
-  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [role, setRole] = useState("staff");
   const [checking, setChecking] = useState(false);
+
   useEffect(() => {
-  checkExistingLogin();
-}, []);
+    checkExistingLogin();
+  }, []);
 
-const checkExistingLogin = async () => {
-  try {
-    const token = await AsyncStorage.getItem("userToken");
+  const checkExistingLogin = async () => {
+    try {
+      const token = await AsyncStorage.getItem("userToken");
+      const userData = await AsyncStorage.getItem("userData");
 
-    if (token) {
-      router.replace("/(tabs)/home");
+      if (token && userData) {
+        router.replace("/(tabs)/home");
+      }
+    } catch (error) {
+      console.log(error);
     }
-  } catch (error) {
-    console.log(error);
-  }
-};
+  };
 
-  // ─── Auto-login when user re-enters office range ───────────────────────────
+  // Auto-login when user re-enters office range
   useEffect(() => {
     let subscription;
 
@@ -69,20 +72,16 @@ const checkExistingLogin = async () => {
 
           if (dist <= MAX_DISTANCE) {
             try {
-              const { email: savedEmail, password: savedPassword } =
+              const { username: savedUsername, password: savedPassword } =
                 JSON.parse(saved);
 
-              // Validate saved credentials (update these to match your real staff credentials)
-              if (
-                savedEmail !== "shivam.yadav@hometown.in" ||
-                savedPassword !== "staff123"
-              ) {
-                return;
+              // Use OnTrack API for auto-login
+              const result = await authService.login(savedUsername, savedPassword);
+              
+              if (result.success) {
+                if (subscription) subscription.remove();
+                router.replace("/(tabs)/home");
               }
-
-              await AsyncStorage.setItem("userToken", "logged_in");
-              if (subscription) subscription.remove();
-              router.replace("/(tabs)/home");
             } catch (e) {
               console.log("Auto login error:", e);
             }
@@ -98,21 +97,15 @@ const checkExistingLogin = async () => {
     };
   }, []);
 
-  // ─── Manual Login ──────────────────────────────────────────────────────────
+  // Manual Login with OnTrack API
   const login = async () => {
-    // 1. Validate credentials
-    const validEmail =
-      role === "staff"
-        ? "shivam.yadav@hometown.in"
-        : "manager@hometown.in";
-    const validPassword = role === "staff" ? "staff123" : "manager123";
-
-    if (email !== validEmail || password !== validPassword) {
-      Alert.alert("Login Failed", "Invalid Email or Password");
+    // Validate inputs
+    if (!username || !password) {
+      Alert.alert("Error", "Please enter both Employee Number and Password");
       return;
     }
 
-    // 2. Request foreground location permission
+    // Request location permissions
     const { status: fgStatus } =
       await Location.requestForegroundPermissionsAsync();
     if (fgStatus !== "granted") {
@@ -120,7 +113,6 @@ const checkExistingLogin = async () => {
       return;
     }
 
-    // 3. Request background location permission
     const { status: bgStatus } =
       await Location.requestBackgroundPermissionsAsync();
     if (bgStatus !== "granted") {
@@ -131,10 +123,10 @@ const checkExistingLogin = async () => {
       return;
     }
 
-    // 4. Get current location and verify office range
     try {
       setChecking(true);
 
+      // Get current location and verify office range
       const location = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.Highest,
       });
@@ -157,24 +149,34 @@ const checkExistingLogin = async () => {
         return;
       }
 
-      // 5. Save credentials & token, then navigate
-      await AsyncStorage.setItem(
-        "savedCredentials",
-        JSON.stringify({ email, password })
-      );
-      await AsyncStorage.setItem("userToken", "logged_in");
+      // Call OnTrack login API with username (employee number)
+      const result = await authService.login(username, password);
 
-      Alert.alert("Success", "Login Successful");
-      router.replace("/(tabs)/home");
+      if (result.success) {
+        // Save credentials for auto-login
+        await AsyncStorage.setItem(
+          "savedCredentials",
+          JSON.stringify({ username, password })
+        );
+
+        Alert.alert("Success", `Welcome ${result.user.name}!`);
+        router.replace("/(tabs)/home");
+      } else {
+        Alert.alert("Login Failed", result.message);
+      }
     } catch (error) {
       console.log(error);
-      Alert.alert("Location Error", "Unable to get current location.");
+      Alert.alert("Error", "An error occurred during login. Please try again.");
     } finally {
       setChecking(false);
     }
   };
 
-  // ─── UI ────────────────────────────────────────────────────────────────────
+  // Optional: Show registration option
+  const goToRegister = () => {
+    router.push("/register");
+  };
+
   return (
     <ScrollView
       contentContainerStyle={styles.container}
@@ -204,10 +206,8 @@ const checkExistingLogin = async () => {
 
       {/* Card */}
       <View style={styles.card}>
-
-        {/* Person icon top-right */}
         <View style={styles.personIconWrapper}>
-          <MaterialIcons name="person-outline" size={24} color="#D96A17" />
+          <MaterialIcons name="badge" size={24} color="#D96A17" />
         </View>
 
         <Text style={styles.portal}>TEAM PORTAL</Text>
@@ -215,68 +215,21 @@ const checkExistingLogin = async () => {
         <Text style={styles.subHeading}>
           {checking
             ? "Verifying your location…"
-            : "Access attendance, learning, assignments and targets."}
+            : "Enter your employee number and password"}
         </Text>
 
-        {/* Role Toggle */}
-        <View style={styles.toggleRow}>
-          <TouchableOpacity
-            style={[styles.toggleBtn, role === "staff" && styles.toggleActive]}
-            onPress={() => setRole("staff")}
-          >
-            <MaterialIcons
-              name="person"
-              size={17}
-              color={role === "staff" ? "#fff" : "#555"}
-            />
-            <Text
-              style={[
-                styles.toggleText,
-                role === "staff" && styles.toggleTextActive,
-              ]}
-            >
-              Staff
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[
-              styles.toggleBtn,
-              role === "manager" && styles.toggleActive,
-            ]}
-            onPress={() => setRole("manager")}
-          >
-            <MaterialIcons
-              name="work-outline"
-              size={17}
-              color={role === "manager" ? "#fff" : "#555"}
-            />
-            <Text
-              style={[
-                styles.toggleText,
-                role === "manager" && styles.toggleTextActive,
-              ]}
-            >
-              Manager
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Email */}
-        <Text style={styles.label}>Email Address</Text>
+        {/* Employee Number / Username */}
+        <Text style={styles.label}>Employee Number</Text>
         <View style={styles.inputContainer}>
-          <MaterialIcons name="email" size={20} color="#D96A17" />
+          <MaterialIcons name="badge" size={20} color="#D96A17" />
           <TextInput
-            placeholder={
-              role === "staff"
-                ? "staff@hometown.com"
-                : "manager@hometown.com"
-            }
-            value={email}
-            onChangeText={setEmail}
+            placeholder="e.g., RC000447"
+            value={username}
+            onChangeText={setUsername}
             style={styles.input}
-            autoCapitalize="none"
-            keyboardType="email-address"
+            autoCapitalize="characters"
+            autoCorrect={false}
+            editable={!checking}
           />
         </View>
 
@@ -290,6 +243,7 @@ const checkExistingLogin = async () => {
             onChangeText={setPassword}
             secureTextEntry={!showPassword}
             style={styles.input}
+            editable={!checking}
           />
           <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
             <MaterialIcons
@@ -298,6 +252,14 @@ const checkExistingLogin = async () => {
               color="#888"
             />
           </TouchableOpacity>
+        </View>
+
+        {/* Demo Credentials Notice */}
+        <View style={styles.demoNote}>
+          <MaterialIcons name="info" size={14} color="#D96A17" />
+          <Text style={styles.demoText}>
+            Demo: Use RC000447 / Password@123
+          </Text>
         </View>
 
         {/* Location notice */}
@@ -314,13 +276,22 @@ const checkExistingLogin = async () => {
           onPress={login}
           disabled={checking}
         >
-          <Text style={styles.loginText}>
-            {checking ? "Verifying Location…" : "Open Staff Dashboard →"}
+          {checking ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.loginText}>Open Staff Dashboard →</Text>
+          )}
+        </TouchableOpacity>
+
+        {/* Register Link */}
+        <TouchableOpacity onPress={goToRegister} style={styles.registerLink}>
+          <Text style={styles.registerText}>
+            New user? Register here
           </Text>
         </TouchableOpacity>
 
         <Text style={styles.footerText}>
-          Use your assigned HomeTown staff account.
+          Use your assigned HomeTown employee credentials.
         </Text>
       </View>
 
@@ -430,40 +401,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
 
-  toggleRow: {
-    flexDirection: "row",
-    gap: 10,
-    marginBottom: 2,
-  },
-
-  toggleBtn: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    paddingVertical: 9,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#ddd",
-    backgroundColor: "#F5EDE5",
-  },
-
-  toggleActive: {
-    backgroundColor: "#D96A17",
-    borderColor: "#D96A17",
-  },
-
-  toggleText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#555",
-  },
-
-  toggleTextActive: {
-    color: "#fff",
-  },
-
   label: {
     fontSize: 13,
     fontWeight: "600",
@@ -489,7 +426,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
 
-  locationNote: {
+  demoNote: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#FFF4EC",
@@ -497,6 +434,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 7,
     marginTop: 12,
+    gap: 6,
+  },
+
+  demoText: {
+    fontSize: 11,
+    color: "#D96A17",
+    fontWeight: "500",
+    flex: 1,
+  },
+
+  locationNote: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFF4EC",
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    marginTop: 8,
     gap: 6,
   },
 
@@ -524,6 +479,17 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 15,
     fontWeight: "700",
+  },
+
+  registerLink: {
+    marginTop: 12,
+    alignItems: "center",
+  },
+
+  registerText: {
+    color: "#D96A17",
+    fontSize: 13,
+    fontWeight: "600",
   },
 
   footerText: {

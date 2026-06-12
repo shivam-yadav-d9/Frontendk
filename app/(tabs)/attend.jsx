@@ -1,384 +1,627 @@
+import { MaterialIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import * as Location from "expo-location";
 import { router } from "expo-router";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Alert,
+  ActivityIndicator,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
-  TouchableOpacity,
   View,
 } from "react-native";
+import attendanceService from "../../services/attendance.service";
+import eventEmitter from "../../services/eventEmitter";
+import locationService from "../../services/location.service";
 
-import {
-  MAX_DISTANCE,
-  OFFICE_LOCATION,
-  calculateDistance,
-} from ".././../utils/location";
+// ─── helpers ────────────────────────────────────────────────────────────────
+
+const formatTime = (dateString) => {
+  if (!dateString) return "--:--";
+  return new Date(dateString).toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  });
+};
+
+const formatDate = (dateString) => {
+  if (!dateString) return "—";
+  return new Date(dateString).toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+};
+
+/**
+ * Given a checkIn ISO string and optional accumulated minutes from
+ * previous sessions, compute the total elapsed duration string.
+ *
+ * If the session is still open (no checkOut), we add seconds elapsed
+ * since checkIn on top of any previously-recorded minutes.
+ */
+const computeLiveDuration = (todayAttendance, isCheckedIn) => {
+  if (!todayAttendance) return "0h 0m 0s";
+
+  const baseMins = todayAttendance.totalDurationMinutes || 0;
+
+  if (!isCheckedIn || !todayAttendance.oldestCheckIn) {
+    // Session closed — just show the recorded total
+    const h = Math.floor(baseMins / 60);
+    const m = baseMins % 60;
+    return `${h}h ${m}m`;
+  }
+
+  // Session open — add live elapsed seconds since this check-in began
+  const checkInMs = new Date(todayAttendance.oldestCheckIn).getTime();
+  const elapsedMs = Date.now() - checkInMs;
+  const totalSeconds = Math.floor(elapsedMs / 1000);
+
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+
+  return `${h}h ${m}m ${s}s`;
+};
+
+// ─── component ──────────────────────────────────────────────────────────────
 
 export default function Attend() {
+  const [user, setUser] = useState(null);
   const [distance, setDistance] = useState(0);
   const [isInsideOffice, setIsInsideOffice] = useState(false);
-  const [checkedIn, setCheckedIn] = useState(false);
+  const [currentStatus, setCurrentStatus] = useState("CHECKED_OUT");
+  const [attendanceHistory, setAttendanceHistory] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [todayAttendance, setTodayAttendance] = useState(null);
 
-  const isInsideRef = useRef(false);
+  // Live duration ticker — only runs while checked in
+  const [liveDuration, setLiveDuration] = useState("0h 0m 0s");
+  const timerRef = useRef(null);
+  const todayRef = useRef(null);     // mirrors todayAttendance for timer closure
+  const statusRef = useRef("CHECKED_OUT"); // mirrors currentStatus
 
-  useEffect(() => {
-    let subscription;
+  // Stable ref for event listener
+  const refreshAttendanceDataRef = useRef(null);
 
-    const startTracking = async () => {
-      const { status } =
-        await Location.requestForegroundPermissionsAsync();
-
-      if (status !== "granted") {
-        Alert.alert(
-          "Permission Required",
-          "Please allow location access"
-        );
-        return;
-      }
-
-      subscription = await Location.watchPositionAsync(
-        {
-          accuracy: Location.Accuracy.Highest,
-          timeInterval: 5000,
-          distanceInterval: 5,
-        },
-        async (location) => {
-          const distanceInMeters = calculateDistance(
-            location.coords.latitude,
-            location.coords.longitude,
-            OFFICE_LOCATION.latitude,
-            OFFICE_LOCATION.longitude
-          );
-
-          setDistance(distanceInMeters.toFixed(2));
-
-          if (distanceInMeters <= MAX_DISTANCE) {
-            if (!isInsideRef.current) {
-              isInsideRef.current = true;
-              setIsInsideOffice(true);
-            }
-          } else {
-            if (isInsideRef.current) {
-              isInsideRef.current = false;
-              setIsInsideOffice(false);
-
-              try {
-                await AsyncStorage.removeItem("userToken");
-
-                Alert.alert(
-                  "Logged Out",
-                  "You left the office area"
-                );
-
-                router.replace("/");
-              } catch (error) {
-                console.log(error);
-              }
-            }
-          }
-        }
-      );
-    };
-
-    startTracking();
-
-    return () => {
-      if (subscription) subscription.remove();
-    };
+  // ── start / stop the live timer ──────────────────────────────────────────
+  const startTimer = useCallback(() => {
+    if (timerRef.current) return; // already running
+    timerRef.current = setInterval(() => {
+      setLiveDuration(computeLiveDuration(todayRef.current, true));
+    }, 1000);
   }, []);
 
-  const handleCheckIn = () => {
-    if (!isInsideOffice) {
-      Alert.alert(
-        "Access Denied",
-        "You must be inside office premises."
-      );
-      return;
+  const stopTimer = useCallback(() => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
     }
+  }, []);
 
-    setCheckedIn(true);
+  // ── sync refs and manage timer on state changes ──────────────────────────
+  useEffect(() => {
+    todayRef.current = todayAttendance;
+    statusRef.current = currentStatus;
 
-    Alert.alert(
-      "Success",
-      "Attendance Marked Successfully"
+    if (currentStatus === "CHECKED_IN" && todayAttendance?.oldestCheckIn) {
+      // Snapshot immediately so the first render isn't stale
+      setLiveDuration(computeLiveDuration(todayAttendance, true));
+      startTimer();
+    } else {
+      stopTimer();
+      // Show final recorded duration when checked out
+      if (todayAttendance) {
+        setLiveDuration(computeLiveDuration(todayAttendance, false));
+      } else {
+        setLiveDuration("0h 0m");
+      }
+    }
+  }, [currentStatus, todayAttendance, startTimer, stopTimer]);
+
+  // Cleanup timer on unmount
+  useEffect(() => () => stopTimer(), [stopTimer]);
+
+  // ── fetch / refresh attendance data ─────────────────────────────────────
+  const refreshAttendanceData = useCallback(async () => {
+    try {
+      const userData = await AsyncStorage.getItem("userData");
+      if (!userData) return;
+      const parsedUser = JSON.parse(userData);
+      const employeeNumber = parsedUser.employeeNumber;
+      if (!employeeNumber) return;
+
+      const [status, today, history, location] = await Promise.all([
+        attendanceService.getCurrentStatus(employeeNumber),
+        attendanceService.getTodayAttendance(employeeNumber),
+        attendanceService.getAttendanceHistory(employeeNumber),
+        locationService.getCurrentLocation(),
+      ]);
+
+      setCurrentStatus(status);
+      setTodayAttendance(today);
+      if (history.success) setAttendanceHistory(history.data);
+      if (location) {
+        setDistance(location.distance);
+        setIsInsideOffice(location.isInside);
+      }
+    } catch (error) {
+      console.error("[Attend] Error refreshing attendance:", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshAttendanceDataRef.current = refreshAttendanceData;
+  }, [refreshAttendanceData]);
+
+  // ── init ─────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const handleAttendanceUpdate = () => {
+      console.log("[Attend] ATTENDANCE_UPDATED received");
+      refreshAttendanceDataRef.current?.();
+    };
+
+    const init = async () => {
+      try {
+        const userData = await AsyncStorage.getItem("userData");
+        if (!userData) { router.replace("/"); return; }
+        setUser(JSON.parse(userData));
+
+        await refreshAttendanceData();
+        await locationService.startTracking();
+
+        const location = await locationService.getCurrentLocation();
+        if (location) {
+          setDistance(location.distance);
+          setIsInsideOffice(location.isInside);
+        }
+      } catch (error) {
+        console.error("[Attend] Init error:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    eventEmitter.on("ATTENDANCE_UPDATED", handleAttendanceUpdate);
+    init();
+
+    return () => {
+      locationService.stopTracking();
+      eventEmitter.off("ATTENDANCE_UPDATED", handleAttendanceUpdate);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    attendanceService.clearStatusCache();
+    await refreshAttendanceData();
+    setRefreshing(false);
+  }, [refreshAttendanceData]);
+
+  // ── derived display values ───────────────────────────────────────────────
+  const isCheckedIn = currentStatus === "CHECKED_IN";
+  const statusColor = isCheckedIn ? "#10B981" : "#EF4444";
+  const statusLabel = isCheckedIn ? "Checked In" : "Not In";
+
+  // The backend sends "Absent" when duration = 0 (session still open).
+  // Override: if we know the user is checked in, always show "Present".
+  const todayDisplayStatus = isCheckedIn
+    ? "Present"
+    : todayAttendance?.latestCheckOut
+    ? "Present"
+    : todayAttendance?.oldestCheckIn
+    ? "Present"  // has a record but no checkout yet — still present
+    : todayAttendance?.status || "Absent";
+
+  // ── render ───────────────────────────────────────────────────────────────
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#D96A17" />
+      </View>
     );
-  };
-
-  const attendanceData = [
-    {
-      date: "03 Jun 2026",
-      time: "09:02 AM",
-      status: "Present",
-    },
-    {
-      date: "02 Jun 2026",
-      time: "08:58 AM",
-      status: "Present",
-    },
-    {
-      date: "01 Jun 2026",
-      time: "09:05 AM",
-      status: "Present",
-    },
-    {
-      date: "31 May 2026",
-      time: "08:55 AM",
-      status: "Present",
-    },
-  ];
+  }
 
   return (
     <ScrollView
       style={styles.container}
       showsVerticalScrollIndicator={false}
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+      }
     >
-      {/* Header */}
-
+      {/* ── Header ─────────────────────────────────────────────────── */}
       <View style={styles.header}>
-        <Text style={styles.headerTag}>
-          ATTENDANCE HUB
-        </Text>
-
-        <Text style={styles.headerTitle}>
-          Attendance
-        </Text>
-
+        <Text style={styles.headerTag}>ATTENDANCE HUB</Text>
+        <Text style={styles.headerTitle}>My Dashboard</Text>
         <Text style={styles.headerSubtitle}>
-          Mark attendance only inside office.
+          Track attendance and office status
+        </Text>
+        <Text style={styles.userName}>
+          {user?.name} • {user?.employeeNumber}
         </Text>
       </View>
 
-      {/* Check In Button */}
-
-      <TouchableOpacity
-        style={[
-          styles.checkButton,
-          {
-            backgroundColor: isInsideOffice
-              ? "#10B981"
-              : "#9CA3AF",
-          },
-        ]}
-        onPress={handleCheckIn}
-      >
-        <Text style={styles.checkText}>
-          {checkedIn
-            ? "✓ Attendance Marked"
-            : "Check In"}
-        </Text>
-      </TouchableOpacity>
-
-      {/* Status */}
-
-      <View style={styles.card}>
-        <Text style={styles.cardLabel}>
-          Current Status
-        </Text>
-
-        <Text
-          style={[
-            styles.statusText,
-            {
-              color: isInsideOffice
-                ? "#10B981"
-                : "#EF4444",
-            },
-          ]}
-        >
-          {isInsideOffice
-            ? "● Inside Office"
-            : "● Outside Office"}
-        </Text>
+      {/* ── Stats Row ──────────────────────────────────────────────── */}
+      <View style={styles.statsRow}>
+        <View style={styles.statCard}>
+          <MaterialIcons name="access-time" size={24} color="#D96A17" />
+          <Text style={styles.statLabel}>Status</Text>
+          <Text style={[styles.statValue, { color: statusColor }]}>
+            {statusLabel}
+          </Text>
+        </View>
+        <View style={styles.statCard}>
+          <MaterialIcons name="calendar-today" size={24} color="#D96A17" />
+          <Text style={styles.statLabel}>Today</Text>
+          <Text style={styles.statValue}>
+            {new Date().toLocaleDateString("en-GB", {
+              day: "2-digit",
+              month: "short",
+            })}
+          </Text>
+        </View>
+        <View style={styles.statCard}>
+          <MaterialIcons
+            name={isInsideOffice ? "location-on" : "location-off"}
+            size={24}
+            color={isInsideOffice ? "#10B981" : "#D96A17"}
+          />
+          <Text style={styles.statLabel}>Distance</Text>
+          <Text style={styles.statValue}>{Math.round(distance)}m</Text>
+        </View>
       </View>
 
-      {/* Distance */}
+      {/* ── Today's Session ────────────────────────────────────────── */}
+      <Text style={styles.sectionTitle}>Today's Session</Text>
 
-      <View style={styles.card}>
-        <Text style={styles.cardLabel}>
-          Distance From Office
-        </Text>
-
-        <Text style={styles.distanceText}>
-          {distance} m
-        </Text>
-      </View>
-
-      {/* Office Info */}
-
-      {/* <View style={styles.card}>
-        <Text style={styles.cardTitle}>
-          Office Information
-        </Text>
-
-        <Text style={styles.infoText}>
-          Allowed Radius: {MAX_DISTANCE}m
-        </Text>
-
-        <Text style={styles.infoText}>
-          Latitude: {OFFICE_LOCATION.latitude}
-        </Text>
-
-        <Text style={styles.infoText}>
-          Longitude: {OFFICE_LOCATION.longitude}
-        </Text>
-      </View> */}
-
-      {/* History */}
-
-      <Text style={styles.sectionTitle}>
-        Attendance History
-      </Text>
-
-      {attendanceData.map((item, index) => (
-        <View
-          key={index}
-          style={styles.attendanceCard}
-        >
-          <View>
-            <Text style={styles.attendanceDate}>
-              {item.date}
+      {todayAttendance ? (
+        <View style={styles.sessionCard}>
+          {/* header row */}
+          <View style={styles.sessionHeader}>
+            <Text style={styles.sessionDate}>
+              {todayAttendance.date || new Date().toISOString().split("T")[0]}
             </Text>
+            <View
+              style={[
+                styles.statusPill,
+                {
+                  backgroundColor: isCheckedIn ? "#D1FAE5" : "#FEE2E2",
+                },
+              ]}
+            >
+              <View
+                style={[
+                  styles.statusDot,
+                  { backgroundColor: statusColor },
+                ]}
+              />
+              <Text style={[styles.statusPillText, { color: statusColor }]}>
+                {statusLabel}
+              </Text>
+            </View>
+          </View>
 
-            <Text style={styles.attendanceTime}>
-              Check In: {item.time}
+          {/* Live duration — big and prominent */}
+          <View style={styles.durationBlock}>
+            <MaterialIcons name="timer" size={20} color="#D96A17" />
+            <Text style={styles.durationLabel}>
+              {isCheckedIn ? "Time in office" : "Total duration"}
+            </Text>
+            <Text style={styles.durationValue}>{liveDuration}</Text>
+          </View>
+
+          {/* Detail rows */}
+          <View style={styles.divider} />
+
+          <View style={styles.sessionDetail}>
+            <MaterialIcons name="login" size={16} color="#6B7280" />
+            <Text style={styles.sessionLabel}>Check In</Text>
+            <Text style={styles.sessionValue}>
+              {formatTime(todayAttendance.oldestCheckIn)}
             </Text>
           </View>
 
-          <Text style={styles.present}>
-            ✓ {item.status}
+          <View style={styles.sessionDetail}>
+            <MaterialIcons
+              name="logout"
+              size={16}
+              color={todayAttendance.latestCheckOut ? "#6B7280" : "#D1D5DB"}
+            />
+            <Text style={styles.sessionLabel}>Check Out</Text>
+            <Text
+              style={[
+                styles.sessionValue,
+                !todayAttendance.latestCheckOut && { color: "#9CA3AF" },
+              ]}
+            >
+              {todayAttendance.latestCheckOut
+                ? formatTime(todayAttendance.latestCheckOut)
+                : "Active session"}
+            </Text>
+          </View>
+
+          <View style={styles.sessionDetail}>
+            <MaterialIcons name="repeat" size={16} color="#6B7280" />
+            <Text style={styles.sessionLabel}>Sessions</Text>
+            <Text style={styles.sessionValue}>
+              {todayAttendance.totalSessions || 1}
+            </Text>
+          </View>
+
+          <View style={styles.sessionDetail}>
+            <MaterialIcons name="event-available" size={16} color="#6B7280" />
+            <Text style={styles.sessionLabel}>Day Status</Text>
+            <Text
+              style={[
+                styles.sessionValue,
+                {
+                  color:
+                    todayDisplayStatus === "Present" ? "#10B981" : "#EF4444",
+                  fontWeight: "600",
+                },
+              ]}
+            >
+              {todayDisplayStatus}
+            </Text>
+          </View>
+        </View>
+      ) : (
+        <View style={styles.emptyCard}>
+          <MaterialIcons name="event-busy" size={32} color="#D1D5DB" />
+          <Text style={styles.emptyText}>No attendance recorded today</Text>
+          <Text style={styles.emptySubText}>
+            Auto check-in activates when you enter the office
           </Text>
         </View>
-      ))}
+      )}
+
+      {/* ── Auto Tracking Banner ───────────────────────────────────── */}
+      <View style={styles.autoCard}>
+        <MaterialIcons name="gps-fixed" size={20} color="#D96A17" />
+        <Text style={styles.autoText}>
+          Auto tracking active — checked in/out automatically as you enter or
+          leave the office. Re-entry triggers a new session.
+        </Text>
+      </View>
+
+      {/* ── Attendance History ─────────────────────────────────────── */}
+      {attendanceHistory.length > 0 && (
+        <>
+          <Text style={styles.sectionTitle}>Recent History</Text>
+          {attendanceHistory.map((record, index) => {
+            // Same "Absent" override for history rows that still have a checkIn
+            const displayStatus =
+              record.oldestCheckIn ? "Present" : record.status;
+            const isPresent = displayStatus === "Present";
+            return (
+              <View key={index} style={styles.historyCard}>
+                <View style={styles.historyLeft}>
+                  <Text style={styles.historyDate}>
+                    {formatDate(record.date)}
+                  </Text>
+                  <Text style={styles.historyMeta}>
+                    {record.totalSessions || 1} session
+                    {(record.totalSessions || 1) !== 1 ? "s" : ""}
+                    {" · "}
+                    {formatTime(record.oldestCheckIn)}
+                    {record.latestCheckOut
+                      ? ` – ${formatTime(record.latestCheckOut)}`
+                      : " – ongoing"}
+                  </Text>
+                </View>
+                <View style={styles.historyRight}>
+                  <View
+                    style={[
+                      styles.historyBadge,
+                      {
+                        backgroundColor: isPresent ? "#D1FAE5" : "#FEE2E2",
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.historyBadgeText,
+                        { color: isPresent ? "#065F46" : "#991B1B" },
+                      ]}
+                    >
+                      {displayStatus}
+                    </Text>
+                  </View>
+                  <Text style={styles.historyDuration}>
+                    {record.totalDurationFormatted || "0h 0m"}
+                  </Text>
+                </View>
+              </View>
+            );
+          })}
+        </>
+      )}
 
       <View style={{ height: 30 }} />
     </ScrollView>
   );
 }
 
+// ─── styles ──────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
-  container: {
+  container: { flex: 1, backgroundColor: "#F5F7FA" },
+  loadingContainer: {
     flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
     backgroundColor: "#F5F7FA",
   },
-
   header: {
-    backgroundColor: "#0B2D52",
-    paddingTop: 70,
-    paddingHorizontal: 25,
-    paddingBottom: 70,
-    borderBottomLeftRadius: 40,
-    borderBottomRightRadius: 40,
+    backgroundColor: "#5C2D0C",
+    paddingTop: 60,
+    paddingHorizontal: 20,
+    paddingBottom: 20,
   },
-
   headerTag: {
-    color: "#F59E0B",
+    color: "#D96A17",
     fontWeight: "700",
     letterSpacing: 1,
+    fontSize: 12,
   },
+  headerTitle: { color: "#fff", fontSize: 28, fontWeight: "bold", marginTop: 8 },
+  headerSubtitle: { color: "#D1D5DB", fontSize: 14, marginTop: 4 },
+  userName: { color: "#fff", fontSize: 14, marginTop: 8, opacity: 0.9 },
 
-  headerTitle: {
-    color: "#fff",
-    fontSize: 40,
-    fontWeight: "bold",
-    marginTop: 8,
-  },
-
-  headerSubtitle: {
-    color: "#D1D5DB",
-    fontSize: 16,
-    marginTop: 8,
-  },
-
-  checkButton: {
-    marginHorizontal: 20,
+  statsRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingHorizontal: 20,
     marginTop: -25,
-    borderRadius: 18,
-    paddingVertical: 15,
-    alignItems: "center",
-    elevation: 6,
   },
-
-  checkText: {
-    color: "#fff",
-    fontSize: 18,
-    fontWeight: "bold",
-  },
-
-  card: {
+  statCard: {
     backgroundColor: "#fff",
-    marginHorizontal: 20,
-    marginTop: 18,
-    padding: 20,
-    borderRadius: 20,
+    flex: 1,
+    marginHorizontal: 5,
+    padding: 15,
+    borderRadius: 12,
+    alignItems: "center",
     elevation: 3,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
   },
-
-  cardLabel: {
-    color: "#6B7280",
+  statLabel: { fontSize: 12, color: "#6B7280", marginTop: 8 },
+  statValue: {
     fontSize: 14,
-  },
-
-  statusText: {
-    fontSize: 28,
     fontWeight: "bold",
-    marginTop: 10,
-  },
-
-  distanceText: {
-    fontSize: 36,
-    fontWeight: "bold",
-    color: "#2563EB",
-    marginTop: 10,
-  },
-
-  cardTitle: {
-    fontSize: 22,
-    fontWeight: "bold",
-    color: "#111827",
-    marginBottom: 10,
-  },
-
-  infoText: {
-    color: "#6B7280",
-    marginBottom: 5,
+    marginTop: 4,
+    textAlign: "center",
   },
 
   sectionTitle: {
-    fontSize: 28,
+    fontSize: 20,
     fontWeight: "bold",
     color: "#111827",
     marginHorizontal: 20,
-    marginTop: 25,
-    marginBottom: 15,
+    marginTop: 20,
+    marginBottom: 10,
   },
 
-  attendanceCard: {
+  sessionCard: {
     backgroundColor: "#fff",
     marginHorizontal: 20,
-    marginBottom: 12,
-    borderRadius: 18,
-    padding: 18,
+    marginBottom: 15,
+    borderRadius: 12,
+    padding: 16,
+    elevation: 2,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 3,
+  },
+  sessionHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+    marginBottom: 14,
   },
+  sessionDate: { fontSize: 16, fontWeight: "bold", color: "#111827" },
+  statusPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 20,
+  },
+  statusDot: { width: 7, height: 7, borderRadius: 4 },
+  statusPillText: { fontSize: 13, fontWeight: "600" },
 
-  attendanceDate: {
-    fontSize: 16,
+  durationBlock: {
+    backgroundColor: "#FFF4EC",
+    borderRadius: 10,
+    padding: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 14,
+  },
+  durationLabel: { flex: 1, fontSize: 13, color: "#92400E", fontWeight: "500" },
+  durationValue: {
+    fontSize: 18,
     fontWeight: "700",
-    color: "#111827",
+    color: "#D96A17",
+    fontVariant: ["tabular-nums"],
   },
 
-  attendanceTime: {
+  divider: {
+    height: 1,
+    backgroundColor: "#F3F4F6",
+    marginBottom: 12,
+  },
+  sessionDetail: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 10,
+  },
+  sessionLabel: { flex: 1, fontSize: 13, color: "#6B7280" },
+  sessionValue: { fontSize: 13, fontWeight: "600", color: "#111827" },
+
+  emptyCard: {
+    backgroundColor: "#fff",
+    marginHorizontal: 20,
+    marginBottom: 15,
+    borderRadius: 12,
+    padding: 28,
+    alignItems: "center",
+    elevation: 2,
+  },
+  emptyText: {
+    fontSize: 15,
+    fontWeight: "600",
     color: "#6B7280",
-    marginTop: 4,
+    marginTop: 12,
+  },
+  emptySubText: {
+    fontSize: 13,
+    color: "#9CA3AF",
+    marginTop: 6,
+    textAlign: "center",
   },
 
-  present: {
-    color: "#10B981",
-    fontWeight: "bold",
+  autoCard: {
+    backgroundColor: "#FFF4EC",
+    marginHorizontal: 20,
+    marginBottom: 15,
+    padding: 12,
+    borderRadius: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
   },
+  autoText: { flex: 1, fontSize: 12, color: "#D96A17", lineHeight: 18 },
+
+  historyCard: {
+    backgroundColor: "#fff",
+    marginHorizontal: 20,
+    marginBottom: 8,
+    borderRadius: 10,
+    padding: 14,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    elevation: 1,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 2,
+  },
+  historyLeft: { flex: 1, gap: 4 },
+  historyDate: { fontSize: 14, fontWeight: "600", color: "#111827" },
+  historyMeta: { fontSize: 12, color: "#9CA3AF" },
+  historyRight: { alignItems: "flex-end", gap: 6 },
+  historyBadge: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 20 },
+  historyBadgeText: { fontSize: 12, fontWeight: "600" },
+  historyDuration: { fontSize: 12, color: "#6B7280", fontWeight: "500" },
 });
