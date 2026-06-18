@@ -1,6 +1,6 @@
 export const OFFICE_LOCATION = {
-  latitude: 19.137031,
-  longitude: 72.862710,
+  latitude: 19.132989,
+  longitude: 72.866625,
 };
 
 export const MAX_DISTANCE = 100;
@@ -21,11 +21,11 @@ export const calculateDistance = (
 
   const a =
     Math.sin(Δφ / 2) *
-      Math.sin(Δφ / 2) +
+    Math.sin(Δφ / 2) +
     Math.cos(φ1) *
-      Math.cos(φ2) *
-      Math.sin(Δλ / 2) *
-      Math.sin(Δλ / 2);
+    Math.cos(φ2) *
+    Math.sin(Δλ / 2) *
+    Math.sin(Δλ / 2);
 
   const c =
     2 * Math.atan2(
