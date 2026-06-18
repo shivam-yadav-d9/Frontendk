@@ -49,8 +49,7 @@
         {
           "locationWhenInUsePermission": "Allow app to access your location.",
           "locationAlwaysAndWhenInUsePermission": "Allow app to track your location.",
-          "isAndroidBackgroundLocationEnabled": true,
-          "isAndroidForegroundServiceEnabled": true
+          "isAndroidBackgroundLocationEnabled": true
         }
       ],
       [

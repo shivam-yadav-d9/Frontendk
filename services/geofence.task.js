@@ -53,18 +53,6 @@ function isSessionStaleFromHistory(historyData) {
     return false;
 }
 
-// Pure status derivation — no service instance state (safe in bg context)
-function deriveStatusFromHistory(historyData) {
-    if (!historyData?.length) return 'CHECKED_OUT';
-    const today = new Date().toISOString().split('T')[0];
-    const todayRecord = historyData.find(item => item.date === today);
-    if (!todayRecord) return 'CHECKED_OUT';
-    if (todayRecord.status === 'OPEN') return 'CHECKED_IN';
-    if (todayRecord.oldestCheckIn && !todayRecord.latestCheckOut) return 'CHECKED_IN';
-    return 'CHECKED_OUT';
-}
-
-
 TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
     if (error) {
         console.error('[BgTask] Error:', error.message);
@@ -115,7 +103,7 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
         if (cachedStatus !== null && cacheAge < attendanceService.STATUS_CACHE_TTL) {
             // Cache is fresh — use it, skip the API call
             isCheckedIn = cachedStatus === 'CHECKED_IN';
-            console.log(`[BgTask] Status: ${cachedStatus} (cache, age=${Math.round(cacheAge / 1000)}s) — skipping API`);
+            console.log(`[BgTask] Status: ${cachedStatus} (cache, age=${Math.round(cacheAge/1000)}s) — skipping API`);
         } else {
             // Cache stale — fetch from API
             const history = await attendanceService.getAttendanceHistory(employeeNumber);
@@ -144,7 +132,7 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
                 return;
             }
 
-            isCheckedIn = deriveStatusFromHistory(historyData) === 'CHECKED_IN';
+            isCheckedIn = attendanceService._deriveStatus(history) === 'CHECKED_IN';
         }
     } catch (e) {
         console.error('[BgTask] Could not get status:', e);
@@ -154,7 +142,7 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
     // ── AUTO CHECK-IN ─────────────────────────────────────────────────────────
     if (isInside && !isCheckedIn) {
         if ((now - cooldowns.lastCheckIn) < BG_COOLDOWN_MS) {
-            console.log(`[BgTask] Check-in cooldown active — skipping (${Math.round((BG_COOLDOWN_MS - (now - cooldowns.lastCheckIn)) / 1000)}s left)`);
+            console.log(`[BgTask] Check-in cooldown active — skipping (${Math.round((BG_COOLDOWN_MS - (now - cooldowns.lastCheckIn))/1000)}s left)`);
             return;
         }
 
