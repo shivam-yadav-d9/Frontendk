@@ -1,19 +1,11 @@
 // services/location.service.js
-//
-// Handles BOTH foreground (app open) and background (app closed) tracking.
-//
-//  Foreground  → Location.watchPositionAsync  → handleLocationUpdate()
-//  Background  → Location.startLocationUpdatesAsync (background task)
-//               The task is defined in geofence.task.js and registered at
-//               app root (_layout.tsx).  This service just starts/stops it.
-
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import { Alert, AppState } from 'react-native';
 import { MAX_DISTANCE, OFFICE_LOCATION, calculateDistance } from '../utils/location';
 import attendanceService from './attendance.service';
 import eventEmitter from './eventEmitter';
-import { BACKGROUND_LOCATION_TASK } from './geofence.task'; // registers the task
+import { BACKGROUND_LOCATION_TASK } from './geofence.task';
 
 class LocationService {
     constructor() {
@@ -26,12 +18,27 @@ class LocationService {
         this.isProcessing = false;
         this.lastCheckInTime = 0;
         this.lastCheckOutTime = 0;
-        this.CHECK_IN_COOLDOWN = 30_000;  // 30 s
-        this.CHECK_OUT_COOLDOWN = 30_000;  // 30 s
+        this.CHECK_IN_COOLDOWN = 30_000;
+        this.CHECK_OUT_COOLDOWN = 30_000;
         this.STALE_RECOVERY_COOLDOWN = 30_000;
         this.lastStaleRecoveryTime = 0;
-        this.wasInsideOffice = null;  // null = unknown (first run)
+        this.wasInsideOffice = null;
         this.midnightTimeout = null;
+    }
+
+    // ── ✅ NEW: Persist wasInside across app restarts ─────────────────────────
+    async _loadWasInside() {
+        try {
+            const raw = await AsyncStorage.getItem('bgTaskWasInside');
+            if (raw === null) return null;
+            return raw === 'true';
+        } catch { return null; }
+    }
+
+    async _saveWasInside(value) {
+        try {
+            await AsyncStorage.setItem('bgTaskWasInside', String(value));
+        } catch { }
     }
 
     // ── Permission helpers ───────────────────────────────────────────────────
@@ -46,8 +53,6 @@ class LocationService {
             return false;
         }
 
-        // Background permission is required for the background task to fire
-        // when the app is closed.  On iOS this shows "Allow Always" prompt.
         const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
         if (bgStatus !== 'granted') {
             Alert.alert(
@@ -55,7 +60,6 @@ class LocationService {
                 'To auto check-in/out when the app is closed, please select "Always" for location access in Settings.',
                 [{ text: 'OK' }]
             );
-            // We continue — foreground tracking still works, background won't.
         }
 
         return true;
@@ -74,16 +78,14 @@ class LocationService {
             }
 
             await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
-                accuracy: Location.Accuracy.Balanced, // saves battery vs High
-                timeInterval: 60_000,   // fire at most every 60 s
-                distanceInterval: 10,   // OR every 50 m moved
-                // Android foreground-service notification keeps the task alive
+                accuracy: Location.Accuracy.Balanced,
+                timeInterval: 5000,
+                distanceInterval: 6,
                 foregroundService: {
                     notificationTitle: 'Attendance Tracking',
                     notificationBody: 'Tracking your location for auto check-in/out',
                     notificationColor: '#D96A17',
                 },
-                // iOS — keep waking the app even when killed
                 pausesUpdatesAutomatically: false,
                 showsBackgroundLocationIndicator: true,
                 activityType: Location.ActivityType.Other,
@@ -127,13 +129,15 @@ class LocationService {
             const permOk = await this._requestPermissions();
             if (!permOk) return false;
 
-            // ── Foreground watcher ───────────────────────────────────────────
-            // AFTER
+            // ✅ Restore wasInside from AsyncStorage so we don't false-trigger on restart
+            this.wasInsideOffice = await this._loadWasInside();
+            console.log('[LocationService] Restored wasInside:', this.wasInsideOffice);
+
             this.locationSubscription = await Location.watchPositionAsync(
                 {
                     accuracy: Location.Accuracy.BestForNavigation,
-                    timeInterval: 500,    // 0.5s — near-instant
-                    distanceInterval: 1,  // 1 meter moved = update
+                    timeInterval: 1000,
+                    distanceInterval: 3,
                 },
                 this.handleLocationUpdate.bind(this)
             );
@@ -146,10 +150,8 @@ class LocationService {
                 this.handleAppStateChange.bind(this)
             );
 
-            // ── Background task ──────────────────────────────────────────────
             await this._startBackgroundTask();
 
-            // Midnight rollover & immediate location check
             this.scheduleMidnightRollover();
             await this.getCurrentLocation();
 
@@ -165,7 +167,6 @@ class LocationService {
     // ── Foreground location handler ──────────────────────────────────────────
 
     async handleLocationUpdate(location) {
-        // ✅ Always runs — never blocked by isProcessing
         const distance = calculateDistance(
             location.coords.latitude,
             location.coords.longitude,
@@ -184,7 +185,6 @@ class LocationService {
 
         await this._saveLastLocation(location.coords, distance, isInsideOffice);
 
-        // ✅ Guard only blocks check-in/out logic, NOT the UI update above
         if (this.isProcessing) return;
 
         try {
@@ -203,7 +203,6 @@ class LocationService {
 
             const now = Date.now();
 
-            // Get current attendance status (uses cache when available)
             const currentStatus = await attendanceService.getCurrentStatus(employeeNumber);
             const isCheckedIn = currentStatus === 'CHECKED_IN';
 
@@ -230,6 +229,7 @@ class LocationService {
                 if (isInsideOffice) {
                     this.lastCheckInTime = now;
                     this.wasInsideOffice = true;
+                    await this._saveWasInside(true); // ✅ ADDED
                     await this.performCheckIn(
                         employeeNumber,
                         location.coords.latitude,
@@ -237,6 +237,7 @@ class LocationService {
                     );
                 } else {
                     this.wasInsideOffice = false;
+                    await this._saveWasInside(false); // ✅ ADDED
                 }
 
                 this.retryCount = 0;
@@ -252,6 +253,7 @@ class LocationService {
                 console.log('[LocationService] AUTO CHECK-IN triggered');
                 this.lastCheckInTime = now;
                 this.wasInsideOffice = true;
+                await this._saveWasInside(true); // ✅ ADDED
                 await this.performCheckIn(
                     employeeNumber,
                     location.coords.latitude,
@@ -267,6 +269,7 @@ class LocationService {
                 console.log('[LocationService] AUTO CHECK-OUT triggered');
                 this.lastCheckOutTime = now;
                 this.wasInsideOffice = false;
+                await this._saveWasInside(false); // ✅ ADDED
                 await this.performCheckOut(
                     employeeNumber,
                     location.coords.latitude,
@@ -274,9 +277,9 @@ class LocationService {
                 );
             } else {
                 this.wasInsideOffice = isInsideOffice;
+                await this._saveWasInside(isInsideOffice); // ✅ ADDED
             }
 
-            // ✅ REMOVED: duplicate emit + saveLastLocation (already done above)
             this.retryCount = 0;
 
         } catch (error) {
@@ -395,8 +398,6 @@ class LocationService {
     }
 
     // ── Stop ─────────────────────────────────────────────────────────────────
-    // NOTE: call this only on LOGOUT.  Do NOT call it when the app backgrounds —
-    // the background task keeps running independently even after stopTracking().
 
     stopTracking() {
         if (this.locationSubscription) {
@@ -415,7 +416,6 @@ class LocationService {
         }
     }
 
-    // Call this on logout to stop EVERYTHING (foreground + background task).
     async stopAllTracking() {
         this.stopTracking();
         await this._stopBackgroundTask();
@@ -429,7 +429,7 @@ class LocationService {
 
         const now = new Date();
         const nextMidnight = new Date(now);
-        nextMidnight.setHours(24, 0, 5, 0); // 00:00:05 tomorrow
+        nextMidnight.setHours(24, 0, 5, 0);
         const ms = nextMidnight.getTime() - now.getTime();
 
         console.log(`[LocationService] Midnight rollover in ${Math.round(ms / 1000)}s`);
@@ -458,10 +458,12 @@ class LocationService {
                 console.log("[LocationService] Still inside — opening today's session");
                 this.lastCheckInTime = Date.now();
                 this.wasInsideOffice = true;
+                await this._saveWasInside(true); // ✅ ADDED
                 await this.performCheckIn(employeeNumber, lat, lng);
             } else {
                 attendanceService.clearAll();
                 this.wasInsideOffice = false;
+                await this._saveWasInside(false); // ✅ ADDED
                 eventEmitter.emit('ATTENDANCE_UPDATED');
             }
         } catch (error) {

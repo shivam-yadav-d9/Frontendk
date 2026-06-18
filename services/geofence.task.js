@@ -1,8 +1,4 @@
 // services/geofence.task.js
-//
-// MUST be imported at app root (_layout.jsx) before anything else.
-// Runs in a separate JS context when app is closed — no React, no eventEmitter.
-
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as TaskManager from 'expo-task-manager';
 import { MAX_DISTANCE, OFFICE_LOCATION, calculateDistance } from '../utils/location';
@@ -10,11 +6,9 @@ import attendanceService from './attendance.service';
 
 export const BACKGROUND_LOCATION_TASK = 'BACKGROUND_LOCATION_TASK';
 
-const BG_COOLDOWN_MS = 60_000; // 60s between check-in/out attempts
+const BG_COOLDOWN_MS = 60_000; // 60s between attempts
 
-// ── Persist cooldown timestamps in AsyncStorage ──────────────────────────────
-// Module-level vars reset every time Expo Go restarts the bg task JS context.
-// AsyncStorage survives across firings, so we use it for cooldown state.
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
 async function getLastActionTimes() {
     try {
@@ -30,34 +24,60 @@ async function setLastActionTimes(times) {
     } catch { }
 }
 
-// ── Stale session detection (without relying on in-memory openSessionCheckIn) ─
-// Looks at the history data directly: if today's record has a checkIn time
-// that matches (or is very close to) a previous day's checkOut time, the
-// backend never properly closed the old session.
+// ── Persist wasInside across bg firings (module-level vars reset each time) ──
+async function getWasInside() {
+    try {
+        const raw = await AsyncStorage.getItem('bgTaskWasInside');
+        if (raw === null) return null; // null = unknown (first run)
+        return raw === 'true';
+    } catch { return null; }
+}
+
+async function setWasInside(value) {
+    try {
+        await AsyncStorage.setItem('bgTaskWasInside', String(value));
+    } catch { }
+}
+
+// ── Retry reading userData (fixes "No user" race condition) ──────────────────
+async function getUserWithRetry(maxAttempts = 3, delayMs = 500) {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+            const raw = await AsyncStorage.getItem('userData');
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                if (parsed?.employeeNumber) return parsed;
+            }
+        } catch (e) {
+            console.error(`[BgTask] userData read attempt ${attempt} failed:`, e);
+        }
+        if (attempt < maxAttempts) {
+            await new Promise(r => setTimeout(r, delayMs));
+        }
+    }
+    return null;
+}
+
+// ── Stale session detection ───────────────────────────────────────────────────
 function isSessionStaleFromHistory(historyData) {
     if (!historyData?.length) return false;
-
     const today = new Date().toISOString().split('T')[0];
     const todayRecord = historyData.find(r => r.date === today);
-    if (!todayRecord || todayRecord.latestCheckOut) return false; // already closed, not stale
-
-    // Check if the checkIn for today is from a PREVIOUS calendar day
+    if (!todayRecord || todayRecord.latestCheckOut) return false;
     if (todayRecord.oldestCheckIn) {
         const checkInDate = new Date(todayRecord.oldestCheckIn).toISOString().split('T')[0];
         if (checkInDate !== today) {
-            console.log(`[BgTask] Stale session: checkIn date ${checkInDate} ≠ today ${today}`);
+            console.log(`[BgTask] Stale session: checkIn ${checkInDate} ≠ today ${today}`);
             return true;
         }
     }
-
     return false;
 }
 
+// ── Task definition ───────────────────────────────────────────────────────────
+
 TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
-    if (error) {
-        console.error('[BgTask] Error:', error.message);
-        return;
-    }
+    if (error) { console.error('[BgTask] Error:', error.message); return; }
     if (!data?.locations?.length) return;
 
     const location = data.locations[0];
@@ -65,17 +85,13 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
 
     const { latitude, longitude } = location.coords;
 
-    // ── Guard: need a logged-in user ─────────────────────────────────────────
-    let employeeNumber;
-    try {
-        const raw = await AsyncStorage.getItem('userData');
-        if (!raw) { console.log('[BgTask] No user — skipping'); return; }
-        employeeNumber = JSON.parse(raw).employeeNumber;
-        if (!employeeNumber) return;
-    } catch (e) {
-        console.error('[BgTask] Could not read userData:', e);
+    // ── Guard: need a logged-in user (with retry) ─────────────────────────────
+    const user = await getUserWithRetry();
+    if (!user) {
+        console.log('[BgTask] No user → skipping');
         return;
     }
+    const { employeeNumber } = user;
 
     // ── Geofence check ────────────────────────────────────────────────────────
     const distance = calculateDistance(
@@ -87,47 +103,41 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
 
     console.log(`[BgTask] dist=${Math.round(distance)}m inside=${isInside}`);
 
-    // ── Read cooldowns from AsyncStorage (survives JS context restarts) ───────
+    // ── Read persisted state ──────────────────────────────────────────────────
     const cooldowns = await getLastActionTimes();
+    const wasInside = await getWasInside(); // null | true | false
 
-    // ── Fetch history ONCE and derive everything from it ──────────────────────
-    // This avoids double-fetching: status derivation + stale check both use same data.
-    let historyData = [];
+    // ── Fetch status ──────────────────────────────────────────────────────────
     let isCheckedIn = false;
+    let historyData = [];
 
     try {
-        // Use cache if fresh (within 30s) — avoids API call on every bg firing
         const cachedStatus = attendanceService.statusCache;
         const cacheAge = now - attendanceService.statusCacheTime;
 
         if (cachedStatus !== null && cacheAge < attendanceService.STATUS_CACHE_TTL) {
-            // Cache is fresh — use it, skip the API call
             isCheckedIn = cachedStatus === 'CHECKED_IN';
-            console.log(`[BgTask] Status: ${cachedStatus} (cache, age=${Math.round(cacheAge/1000)}s) — skipping API`);
+            console.log(`[BgTask] Status from cache: ${cachedStatus}`);
         } else {
-            // Cache stale — fetch from API
             const history = await attendanceService.getAttendanceHistory(employeeNumber);
             historyData = history.data || [];
 
-            // ── Stale session recovery ────────────────────────────────────────
-            // If today's open session checkIn is actually from yesterday,
-            // close it and re-check-in if still inside.
+            // Stale session recovery
             if (isSessionStaleFromHistory(historyData)) {
-                console.log('[BgTask] Stale session detected — recovering');
-
-                const checkout = await attendanceService.checkOut(employeeNumber, latitude, longitude);
-                console.log('[BgTask] Stale checkout:', checkout.success);
-
+                console.log('[BgTask] Stale session — recovering');
+                await attendanceService.checkOut(employeeNumber, latitude, longitude);
                 if (isInside) {
                     const checkin = await attendanceService.checkIn(employeeNumber, latitude, longitude);
                     console.log('[BgTask] Fresh check-in after recovery:', checkin.success);
-
                     await AsyncStorage.setItem('lastAutoAction', JSON.stringify({
                         action: 'CHECK_IN',
                         timestamp: new Date().toISOString(),
                         message: 'Auto checked in (session recovery)',
                     }));
                     await setLastActionTimes({ ...cooldowns, lastCheckIn: now });
+                    await setWasInside(true);
+                } else {
+                    await setWasInside(false);
                 }
                 return;
             }
@@ -139,10 +149,21 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
         return;
     }
 
+    // ── Edge-based transitions (wasInside → isInside) ─────────────────────────
+    // This is what enables re-entry auto check-in when app is closed.
+    // wasInside=null means first run — treat as edge just happened if state matches.
+
+    const enteredOffice = isInside && wasInside === false;   // was outside, now inside
+    const exitedOffice  = !isInside && wasInside === true;   // was inside, now outside
+    const firstRun      = wasInside === null;
+
+    console.log(`[BgTask] wasInside=${wasInside} enteredOffice=${enteredOffice} exitedOffice=${exitedOffice}`);
+
     // ── AUTO CHECK-IN ─────────────────────────────────────────────────────────
-    if (isInside && !isCheckedIn) {
+    if (isInside && !isCheckedIn && (enteredOffice || firstRun)) {
         if ((now - cooldowns.lastCheckIn) < BG_COOLDOWN_MS) {
-            console.log(`[BgTask] Check-in cooldown active — skipping (${Math.round((BG_COOLDOWN_MS - (now - cooldowns.lastCheckIn))/1000)}s left)`);
+            console.log(`[BgTask] Check-in cooldown active — skipping`);
+            await setWasInside(isInside);
             return;
         }
 
@@ -150,7 +171,6 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
         try {
             const result = await attendanceService.checkIn(employeeNumber, latitude, longitude);
             console.log('[BgTask] Check-in:', result.success, result.message);
-
             await AsyncStorage.setItem('lastAutoAction', JSON.stringify({
                 action: 'CHECK_IN',
                 timestamp: new Date().toISOString(),
@@ -160,13 +180,15 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
         } catch (e) {
             console.error('[BgTask] Check-in error:', e);
         }
+        await setWasInside(true);
         return;
     }
 
     // ── AUTO CHECK-OUT ────────────────────────────────────────────────────────
-    if (!isInside && isCheckedIn) {
+    if (!isInside && isCheckedIn && (exitedOffice || firstRun)) {
         if ((now - cooldowns.lastCheckOut) < BG_COOLDOWN_MS) {
             console.log(`[BgTask] Check-out cooldown active — skipping`);
+            await setWasInside(isInside);
             return;
         }
 
@@ -174,7 +196,6 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
         try {
             const result = await attendanceService.checkOut(employeeNumber, latitude, longitude);
             console.log('[BgTask] Check-out:', result.success, result.message);
-
             await AsyncStorage.setItem('lastAutoAction', JSON.stringify({
                 action: 'CHECK_OUT',
                 timestamp: new Date().toISOString(),
@@ -185,9 +206,11 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
         } catch (e) {
             console.error('[BgTask] Check-out error:', e);
         }
+        await setWasInside(false);
         return;
     }
 
-    // Already in correct state — no action needed
+    // ── Update wasInside even when no action taken ────────────────────────────
+    await setWasInside(isInside);
     console.log(`[BgTask] No action needed (inside=${isInside}, checkedIn=${isCheckedIn})`);
 });

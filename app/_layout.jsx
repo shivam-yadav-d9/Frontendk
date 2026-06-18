@@ -1,36 +1,26 @@
-// app/_layout.jsx
-//
-// ⚠️ geofence.task import MUST be first — registers the bg task before anything runs
-import "../services/geofence.task";
-
+// app/(staff)/_layout.jsx  (or wherever user lands after login)
 import { Stack } from "expo-router";
 import { useEffect } from "react";
-import locationService from "../services/location.service";
+import locationService from "../../services/location.service";
 
-export default function Layout() {
+export default function StaffLayout() {
   useEffect(() => {
     const init = async () => {
       try {
-        console.log("[Layout] Starting location tracking...");
-        await locationService.startTracking();
-        console.log("[Layout] Location tracking started");
+        console.log("[StaffLayout] Starting location tracking...");
+        const started = await locationService.startTracking();
+        console.log("[StaffLayout] Tracking started:", started);
       } catch (error) {
-        console.error("[Layout] Failed to start tracking:", error);
+        console.error("[StaffLayout] Failed to start tracking:", error);
       }
     };
 
     init();
 
-    // This layout only unmounts on full app close / logout.
-    // stopTracking() stops the foreground watcher only —
-    // the background task keeps running independently.
-    // On LOGOUT call: await locationService.stopAllTracking()
     return () => {
-      locationService.stopTracking();
+      locationService.stopTracking(); // foreground only
     };
   }, []);
 
-  return (
-    <Stack screenOptions={{ headerShown: false }} />
-  );
+  return <Stack screenOptions={{ headerShown: false }} />;
 }
