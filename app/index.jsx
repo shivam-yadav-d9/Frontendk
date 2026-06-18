@@ -97,7 +97,7 @@ export default function LoginScreen() {
     };
   }, []);
 
-  // Manual Login with OnTrack API
+  // Manual Login with OnTrack API - Updated to allow login from anywhere
   const login = async () => {
     // Validate inputs
     if (!username || !password) {
@@ -105,7 +105,7 @@ export default function LoginScreen() {
       return;
     }
 
-    // Request location permissions
+    // Request location permissions (still needed for other features)
     const { status: fgStatus } =
       await Location.requestForegroundPermissionsAsync();
     if (fgStatus !== "granted") {
@@ -126,28 +126,10 @@ export default function LoginScreen() {
     try {
       setChecking(true);
 
-      // Get current location and verify office range
-      const location = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Highest,
-      });
-
-      const distance = calculateDistance(
-        location.coords.latitude,
-        location.coords.longitude,
-        OFFICE_LOCATION.latitude,
-        OFFICE_LOCATION.longitude
-      );
-
-      console.log("Distance from office:", distance, "m");
-
-      if (distance > MAX_DISTANCE) {
-        Alert.alert(
-          "Access Denied",
-          `You are ${Math.round(distance)} meters away from the office. Please be on-site to log in.`
-        );
-        setChecking(false);
-        return;
-      }
+      // REMOVED: Location verification check
+      // Users can now login from anywhere without location restriction
+      
+      console.log("Login attempt from:", username);
 
       // Call OnTrack login API with username (employee number)
       const result = await authService.login(username, password);
@@ -214,7 +196,7 @@ export default function LoginScreen() {
         <Text style={styles.heading}>Staff Login</Text>
         <Text style={styles.subHeading}>
           {checking
-            ? "Verifying your location…"
+            ? "Verifying your credentials…"
             : "Enter your employee number and password"}
         </Text>
 
@@ -254,13 +236,11 @@ export default function LoginScreen() {
           </TouchableOpacity>
         </View>
 
-
-
-        {/* Location notice */}
+        {/* Location notice - Updated to reflect that location is still tracked but not required for login */}
         <View style={styles.locationNote}>
           <MaterialIcons name="location-on" size={14} color="#D96A17" />
           <Text style={styles.locationText}>
-            Location verification required at office premises
+            Location permissions required for attendance tracking
           </Text>
         </View>
 
