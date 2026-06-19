@@ -79,8 +79,8 @@ class LocationService {
 
             await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
                 accuracy: Location.Accuracy.Balanced,
-                timeInterval: 5000,
-                distanceInterval: 6,
+                timeInterval: 3000,
+                distanceInterval: 3,
                 foregroundService: {
                     notificationTitle: 'Attendance Tracking',
                     notificationBody: 'Tracking your location for auto check-in/out',

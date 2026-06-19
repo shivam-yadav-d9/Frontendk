@@ -153,11 +153,13 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
     // This is what enables re-entry auto check-in when app is closed.
     // wasInside=null means first run — treat as edge just happened if state matches.
 
-    const enteredOffice = isInside && wasInside === false;   // was outside, now inside
-    const exitedOffice  = !isInside && wasInside === true;   // was inside, now outside
-    const firstRun      = wasInside === null;
+    // ── Edge-based transitions (wasInside → isInside) ─────────────────────────
+    // Improved for reliable re-entry when app is closed/killed
+    const enteredOffice = isInside && (wasInside === false || wasInside === null);
+    const exitedOffice = !isInside && (wasInside === true || wasInside === null);
+    const firstRun = wasInside === null;
 
-    console.log(`[BgTask] wasInside=${wasInside} enteredOffice=${enteredOffice} exitedOffice=${exitedOffice}`);
+    console.log(`[BgTask] wasInside=${wasInside} | entered=${enteredOffice} | exited=${exitedOffice} | firstRun=${firstRun}`);
 
     // ── AUTO CHECK-IN ─────────────────────────────────────────────────────────
     if (isInside && !isCheckedIn && (enteredOffice || firstRun)) {
