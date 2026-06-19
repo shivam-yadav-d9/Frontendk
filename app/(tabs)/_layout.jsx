@@ -29,7 +29,7 @@ export default function TabsLayout() {
         }}
       />
 
-      <Tabs.Screen
+      {/* <Tabs.Screen
         name="voice"
         options={{
           title: "Voice",
@@ -37,7 +37,7 @@ export default function TabsLayout() {
             <Ionicons name="mic-outline" size={size} color={color} />
           ),
         }}
-      />
+      /> */}
 
       <Tabs.Screen
         name="LMS"
