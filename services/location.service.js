@@ -309,7 +309,8 @@ class LocationService {
                     message: result.message,
                 }));
 
-                if (AppState.currentState === 'active') {
+                // ✅ Don't alert if this was just a "already checked in" confirmation
+                if (AppState.currentState === 'active' && !result.alreadyCheckedIn) {
                     Alert.alert(
                         'Auto Check-In ✓',
                         `Welcome! Checked in at ${new Date().toLocaleTimeString()}`,
