@@ -30,7 +30,7 @@ export default function Targets() {
     try {
       setLoading(true);
       setError(null);
-      
+
       const userData = await AsyncStorage.getItem("userData");
       if (userData) {
         const parsedUser = JSON.parse(userData);
@@ -59,7 +59,7 @@ export default function Targets() {
     try {
       const dailyResult = await targetService.getDailyTargets();
       console.log("Daily targets result:", dailyResult);
-      
+
       if (dailyResult.success && dailyResult.data) {
         setDailyTargets(dailyResult.data);
         setError(null);
@@ -93,10 +93,10 @@ export default function Targets() {
   const formatDate = (dateString) => {
     if (!dateString) return "N/A";
     const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', { 
-      weekday: 'short', 
-      month: 'short', 
-      day: 'numeric' 
+    return date.toLocaleDateString('en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric'
     });
   };
 
@@ -136,20 +136,9 @@ export default function Targets() {
       >
         {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity style={styles.iconBtn} onPress={() => router.back()}>
-            <Ionicons name="chevron-back" size={28} color="#fff" />
-          </TouchableOpacity>
-
           <View>
             <Text style={styles.headerTitle}>My Targets</Text>
-            <Text style={styles.headerSub}>
-              {user?.name || "Employee"} • {user?.employeeNumber || "ID not found"}
-            </Text>
           </View>
-
-          <TouchableOpacity style={styles.iconBtn} onPress={() => router.push("/(tabs)/home")}>
-            <Ionicons name="home-outline" size={28} color="#fff" />
-          </TouchableOpacity>
         </View>
 
         {/* Daily Targets Section */}
@@ -169,11 +158,11 @@ export default function Targets() {
             </View>
           ) : dailyTargets && dailyTargets.length > 0 ? (
             dailyTargets.map((target) => {
-              const progress = target.salesTargetAmount > 0 
+              const progress = target.salesTargetAmount > 0
                 ? Math.min(Math.round(((target.targetAchieved || 0) / target.salesTargetAmount) * 100), 100)
                 : 0;
               const statusColor = getStatusColorFromProgress(progress);
-              
+
               return (
                 <View key={target._id} style={styles.dailyCard}>
                   <View style={styles.dailyCardHeader}>
@@ -245,7 +234,7 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
     paddingHorizontal: 16,
     flexDirection: "row",
-    justifyContent: "space-between",
+    justifyContent: "center",
     alignItems: "center",
   },
   iconBtn: {
@@ -258,7 +247,7 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     color: "#fff",
-    fontSize: 26,
+    fontSize: 25,
     fontWeight: "800",
     textAlign: "center",
   },

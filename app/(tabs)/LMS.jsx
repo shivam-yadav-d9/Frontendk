@@ -100,7 +100,7 @@ export default function LMS() {
     setQuizLoading(true);
     try {
       let questionsData = selectedCourse.questions || [];
-      
+
       if (questionsData.length === 0) {
         const questionsRes = await lmsService.getCourseQuestions(selectedCourse._id);
         if (!questionsRes.success || !questionsRes.data?.length) {
@@ -141,13 +141,13 @@ export default function LMS() {
     const q = questions[currentQuestionIndex];
     const isCorrect = idx === q.correctAnswer;
     if (isCorrect) setScore((p) => p + 1);
-    
+
     // Store answer
     setAnsweredQuestions(prev => ({
       ...prev,
       [currentQuestionIndex]: { selected: idx, correct: isCorrect }
     }));
-    
+
     if (attemptId) await lmsService.submitAnswer(attemptId, q._id, idx);
   };
 
@@ -203,15 +203,15 @@ export default function LMS() {
 
   const parseContentPoints = (contentText) => {
     if (!contentText) return [];
-    
+
     const lines = contentText.split('\n');
     const points = [];
     let currentSection = '';
-    
+
     lines.forEach((line, index) => {
       const trimmedLine = line.trim();
       if (!trimmedLine) return;
-      
+
       if (trimmedLine.endsWith(':') || trimmedLine === trimmedLine.toUpperCase()) {
         if (trimmedLine.length > 0) {
           currentSection = trimmedLine.replace(':', '').trim();
@@ -221,7 +221,7 @@ export default function LMS() {
             index: index
           });
         }
-      } 
+      }
       else if (/^\d+\./.test(trimmedLine)) {
         const cleanText = trimmedLine.replace(/^\d+\.\s*/, '');
         points.push({
@@ -261,7 +261,7 @@ export default function LMS() {
         }
       }
     });
-    
+
     return points;
   };
 
@@ -287,9 +287,7 @@ export default function LMS() {
         <Text style={styles.smallTitle}>LEARNING HUB</Text>
         <Text style={styles.title}>My Learning</Text>
         <Text style={styles.subtitle}>Complete courses and grow your retail skills.</Text>
-        <Text style={styles.userName}>
-          {user?.name || "Employee"} • {employeeNumber || "ID not found"}
-        </Text>
+
       </View>
 
       {/* Progress card */}
@@ -444,10 +442,10 @@ export default function LMS() {
                           return (
                             <View key={index} style={styles.contentPointItem}>
                               <View style={styles.contentPointBullet}>
-                                <Ionicons 
-                                  name={item.isNumbered ? "number-circle" : "checkbox-outline"} 
-                                  size={20} 
-                                  color="#ff7b00" 
+                                <Ionicons
+                                  name={item.isNumbered ? "number-circle" : "checkbox-outline"}
+                                  size={20}
+                                  color="#ff7b00"
                                 />
                               </View>
                               <Text style={styles.contentPointText}>{item.text}</Text>
@@ -598,10 +596,10 @@ export default function LMS() {
                     ]}>
                       {currentQuestionIndex === questions.length - 1 ? "Submit" : "Next"}
                     </Text>
-                    <Ionicons 
-                      name={currentQuestionIndex === questions.length - 1 ? "checkmark" : "arrow-forward"} 
-                      size={18} 
-                      color={selectedOption === null ? "#ccc" : "#fff"} 
+                    <Ionicons
+                      name={currentQuestionIndex === questions.length - 1 ? "checkmark" : "arrow-forward"}
+                      size={18}
+                      color={selectedOption === null ? "#ccc" : "#fff"}
                     />
                   </TouchableOpacity>
                 </View>
@@ -689,59 +687,152 @@ const styles = StyleSheet.create({
 
   // Header
   header: { backgroundColor: "#0B2D4A", paddingTop: 60, paddingHorizontal: 20, paddingBottom: 30, borderBottomLeftRadius: 30, borderBottomRightRadius: 30 },
-  smallTitle: { color: "#F5A623", fontSize: 12, fontWeight: "700", letterSpacing: 1 },
+  smallTitle: { color: "#F5A623", fontSize: 10, fontWeight: "700", letterSpacing: 1 },
   title: { color: "#fff", fontSize: 30, fontWeight: "bold", marginTop: 6 },
   subtitle: { color: "#D8DDE5", marginTop: 6 },
   userName: { color: "#D96A17", fontSize: 12, marginTop: 8, fontWeight: "500" },
 
   // Progress card
-  progressCard: { backgroundColor: "#fff", marginHorizontal: 20, marginTop: -25, borderRadius: 20, padding: 18, flexDirection: "row", justifyContent: "space-between", alignItems: "center", elevation: 4 },
-  progressLabel: { color: "#777" },
+  progressCard: {
+    backgroundColor: "#fff",
+    marginHorizontal: 20,
+    marginTop: -25,
+    borderRadius: 20,
+    paddingHorizontal: 18,
+    paddingVertical: 10,   // Reduced from 18
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    elevation: 4,
+  }, progressLabel: { color: "#777" },
   progressValue: { fontSize: 34, fontWeight: "bold", color: "#0B2D4A" },
-  circle: { width: 70, height: 70, borderRadius: 35, backgroundColor: "#ff7b00", justifyContent: "center", alignItems: "center" },
+  circle: { width: 60, height: 60, borderRadius: 35, backgroundColor: "#ff7b00", justifyContent: "center", alignItems: "center" },
 
   // Stats
-  statsRow: { flexDirection: "row", justifyContent: "space-between", marginHorizontal: 20, marginTop: 20 },
-  statBox: { flex: 1, backgroundColor: "#fff", padding: 18, marginHorizontal: 4, borderRadius: 16, alignItems: "center" },
-  statNumber: { fontSize: 24, fontWeight: "bold", color: "#ff7b00" },
-  statText: { marginTop: 5, color: "#666" },
+  statsRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginHorizontal: 20,
+    marginTop: 16, // was 20
+  },
+
+  statBox: {
+    flex: 1,
+    backgroundColor: "#fff",
+    paddingVertical: 14,   // was 18
+    paddingHorizontal: 14,
+    marginHorizontal: 4,
+    borderRadius: 14,      // was 16
+    alignItems: "center",
+  },
+
+  statNumber: {
+    fontSize: 22,          // was 24
+    fontWeight: "bold",
+    color: "#ff7b00",
+  },
+
+  statText: {
+    marginTop: 4,          // was 5
+    fontSize: 13,          // optional
+    color: "#666",
+  },
 
   // Course list
-  sectionTitle: { marginTop: 25, marginHorizontal: 20, marginBottom: 12, fontSize: 18, fontWeight: "bold", color: "#222" },
-  courseCard: { backgroundColor: "#fff", marginHorizontal: 20, marginBottom: 14, borderRadius: 18, padding: 15, flexDirection: "row", alignItems: "center" },
-  courseIcon: { marginRight: 15 },
-  courseInfo: { flex: 1 },
-  courseTitle: { fontWeight: "bold", fontSize: 16 },
-  courseSubtitle: { color: "#777", marginTop: 4, fontSize: 12 },
-  courseMeta: { flexDirection: "row", marginTop: 6, gap: 8, flexWrap: "wrap", alignItems: "center" },
-  departmentBadge: { backgroundColor: "#FFF4EC", paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 },
-  departmentText: { color: "#ff7b00", fontSize: 10, fontWeight: "600" },
-  passingInfo: { color: "#ff7b00", fontSize: 11, fontWeight: "500" },
-  questionCount: { color: "#666", fontSize: 11 },
-  playButton: { backgroundColor: "#ff7b00", width: 45, height: 45, borderRadius: 22, justifyContent: "center", alignItems: "center" },
+  sectionTitle: { marginTop: 20, marginHorizontal: 20, marginBottom: 12, fontSize: 18, fontWeight: "bold", color: "#222" },
+courseCard: {
+  backgroundColor: "#fff",
+  marginHorizontal: 20,
+  marginBottom: 12,      // was 14
+  borderRadius: 16,      // was 18
+  paddingVertical: 10,   // was 15
+  paddingHorizontal: 14,
+  flexDirection: "row",
+  alignItems: "center",
+},
+
+courseIcon: {
+  marginRight: 12,       // was 15
+},
+
+courseInfo: {
+  flex: 1,
+},
+
+courseTitle: {
+  fontWeight: "bold",
+  fontSize: 15,          // was 16
+},
+
+courseSubtitle: {
+  color: "#777",
+  marginTop: 2,          // was 4
+  fontSize: 11,          // was 12
+},
+
+courseMeta: {
+  flexDirection: "row",
+  marginTop: 4,          // was 6
+  gap: 6,                // was 8
+  flexWrap: "wrap",
+  alignItems: "center",
+},
+
+departmentBadge: {
+  backgroundColor: "#FFF4EC",
+  paddingHorizontal: 8,
+  paddingVertical: 1,    // was 2
+  borderRadius: 10,
+},
+
+departmentText: {
+  color: "#ff7b00",
+  fontSize: 9,           // was 10
+  fontWeight: "600",
+},
+
+passingInfo: {
+  color: "#ff7b00",
+  fontSize: 10,          // was 11
+  fontWeight: "500",
+},
+
+questionCount: {
+  color: "#666",
+  fontSize: 10,          // was 11
+},
+
+playButton: {
+  backgroundColor: "#ff7b00",
+  width: 40,             // was 45
+  height: 40,            // was 45
+  borderRadius: 20,      // was 22
+  justifyContent: "center",
+  alignItems: "center",
+},
 
   // Modal shared
   modalContainer: { flex: 1, backgroundColor: "#F7F8FA" },
 
   // Detail screen
-  detailTopBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingVertical: 14, backgroundColor: "#fff", borderBottomWidth: 1, borderBottomColor: "#E5E5E5" },
+  detailTopBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingVertical: 19, backgroundColor: "#fff", borderBottomWidth: 1, borderBottomColor: "#E5E5E5" },
   backBtn: { padding: 4 },
   detailTopTitle: { fontSize: 16, fontWeight: "bold", color: "#0B2D4A", flex: 1, textAlign: "center" },
   detailScroll: { padding: 20 },
-  
+
   detailTitle: { fontSize: 24, fontWeight: "bold", color: "#0B2D4A", textAlign: "center", marginBottom: 6 },
   detailSubtitle: { fontSize: 14, color: "#777", textAlign: "center", marginBottom: 20 },
-  
+
   // Info Container
   infoContainer: { backgroundColor: "#fff", borderRadius: 12, padding: 16, marginBottom: 16, elevation: 2 },
   infoRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 8 },
   infoLabel: { fontSize: 14, color: "#666", fontWeight: "500" },
   infoValue: { fontSize: 14, color: "#0B2D4A", fontWeight: "600" },
   infoDivider: { height: 1, backgroundColor: "#F0F0F0" },
-  
+
   detailSection: { backgroundColor: "#fff", borderRadius: 12, padding: 16, marginBottom: 16, elevation: 2 },
   detailSectionTitle: { fontSize: 16, fontWeight: "700", color: "#0B2D4A", marginBottom: 12 },
-  
+
   // Content points styles
   contentPointsContainer: { marginTop: 4 },
   sectionHeaderContainer: { flexDirection: "row", alignItems: "center", marginVertical: 12, gap: 10 },
@@ -754,7 +845,7 @@ const styles = StyleSheet.create({
   contentSubPointText: { flex: 1, fontSize: 13, color: "#666", lineHeight: 19 },
   contentTextItem: { marginBottom: 8 },
   contentPlainText: { fontSize: 14, color: "#444", lineHeight: 20 },
-  
+
   resourceRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 12, borderTopWidth: 1, borderTopColor: "#F0F0F0" },
   resourceText: { flex: 1, fontSize: 14, color: "#333", fontWeight: "500" },
   startButton: { backgroundColor: "#ff7b00", flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 10, paddingVertical: 16, borderRadius: 16, marginTop: 8 },
@@ -762,13 +853,13 @@ const styles = StyleSheet.create({
 
   // Quiz screen
   quizContainer: { flex: 1 },
-  quizHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingVertical: 15, backgroundColor: "#fff", borderBottomWidth: 1, borderBottomColor: "#E5E5E5" },
+  quizHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingVertical: 20, backgroundColor: "#fff", borderBottomWidth: 1, borderBottomColor: "#E5E5E5" },
   closeButton: { padding: 4 },
   quizTitle: { fontSize: 16, fontWeight: "bold", color: "#0B2D4A", flex: 1, textAlign: "center" },
   progressIndicator: { backgroundColor: "#ff7b0010", paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
   progressText: { fontSize: 12, fontWeight: "600", color: "#ff7b00" },
-  quizContent: { flex: 1, padding: 20 },
-  questionCard: { backgroundColor: "#fff", borderRadius: 16, padding: 20, marginBottom: 20, elevation: 2 },
+  quizContent: { flex: 1, padding: 10 },
+  questionCard: { backgroundColor: "#fff", borderRadius: 16, padding: 10, marginBottom: 10, elevation: 2 },
   questionNumber: { fontSize: 12, color: "#ff7b00", fontWeight: "600", marginBottom: 10 },
   questionText: { fontSize: 18, fontWeight: "bold", color: "#0B2D4A", lineHeight: 26 },
   optionsGrid: { gap: 12 },
@@ -816,11 +907,11 @@ const styles = StyleSheet.create({
   },
 
   // Result screen
-  resultContainer: { flex: 1, justifyContent: "center", alignItems: "center", padding: 20 },
-  resultCard: { backgroundColor: "#fff", borderRadius: 24, padding: 24, width: "100%", alignItems: "center", elevation: 4 },
+  resultContainer: { flex: 1, justifyContent: "center", alignItems: "center", padding: 10 },
+  resultCard: { backgroundColor: "#fff", borderRadius: 24, padding: 20, width: "100%", alignItems: "center", elevation: 4 },
   resultIcon: { width: 100, height: 100, borderRadius: 50, backgroundColor: "#FFF4EC", justifyContent: "center", alignItems: "center", marginBottom: 20 },
-  resultTitle: { fontSize: 24, fontWeight: "bold", color: "#0B2D4A", marginBottom: 20 },
-  scoreCard: { backgroundColor: "#F7F8FA", borderRadius: 16, padding: 20, width: "100%", alignItems: "center", marginBottom: 20 },
+  resultTitle: { fontSize: 24, fontWeight: "bold", color: "#0B2D4A", marginBottom: 10 },
+  scoreCard: { backgroundColor: "#F7F8FA", borderRadius: 16, padding: 20, width: "100%", alignItems: "center", marginBottom: 10 },
   scoreLabel: { fontSize: 14, color: "#666", marginBottom: 8 },
   scoreValue: { fontSize: 32, fontWeight: "bold", color: "#ff7b00", marginBottom: 12 },
   scoreProgress: { width: "100%", height: 8, backgroundColor: "#E5E5E5", borderRadius: 4, overflow: "hidden", marginBottom: 8 },

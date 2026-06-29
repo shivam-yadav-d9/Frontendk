@@ -46,15 +46,15 @@ export default function Home() {
       if (userData) {
         const parsedData = JSON.parse(userData);
         console.log("User Data:", parsedData);
-        
+
         // Try different possible field names for the user's name
-        const name = parsedData.name || 
-                    parsedData.fullName || 
-                    parsedData.displayName || 
-                    parsedData.employeeName ||
-                    parsedData.firstName + " " + parsedData.lastName ||
-                    "Employee";
-        
+        const name = parsedData.name ||
+          parsedData.fullName ||
+          parsedData.displayName ||
+          parsedData.employeeName ||
+          parsedData.firstName + " " + parsedData.lastName ||
+          "Employee";
+
         setUserName(name);
       }
     } catch (error) {
@@ -69,9 +69,9 @@ export default function Home() {
 
       const empNum = await AsyncStorage.getItem("employeeNumber");
       setEmployeeNumber(empNum);
-      
+
       console.log("Current employee number:", empNum);
-      
+
       if (!empNum) {
         setError("Employee number not found. Please login again.");
         setLoading(false);

@@ -79,10 +79,7 @@ export default function Profile() {
         </View>
         <Text style={styles.name}>{user?.name || "N/A"}</Text>
         <Text style={styles.designation}>{user?.jobTitle || user?.role || "Employee"}</Text>
-        <View style={styles.statusBadge}>
-          <View style={[styles.statusDot, { backgroundColor: user?.isActive ? "#10B981" : "#EF4444" }]} />
-          <Text style={styles.statusText}>{user?.isActive ? "ACTIVE" : "INACTIVE"}</Text>
-        </View>
+     
       </View>
 
       {/* Store & Manager Section */}
@@ -120,29 +117,6 @@ export default function Profile() {
         <InfoRow icon="map-outline" label="EMPLOYEE ZONE" value={user?.employeeZone || "N/A"} />
         <InfoRow icon="cash-outline" label="COST CENTER NO" value={user?.costCenterNo || "N/A"} />
         <InfoRow icon="document-text-outline" label="COST CENTER DESCRIPTION" value={user?.costCenterDescription || "N/A"} />
-      </View>
-
-      {/* Quick Access */}
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Quick Access</Text>
-        <View style={styles.quickAccessRow}>
-          <TouchableOpacity style={styles.quickAccessBtn} onPress={() => router.push("/(tabs)/home")}>
-            <Ionicons name="home-outline" size={24} color="#D96A17" />
-            <Text style={styles.quickAccessText}>Home</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.quickAccessBtn} onPress={() => router.push("/(tabs)/attend")}>
-            <Ionicons name="calendar-outline" size={24} color="#D96A17" />
-            <Text style={styles.quickAccessText}>Attend</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.quickAccessBtn} onPress={() => router.push("/(tabs)/LMS")}>
-            <Ionicons name="school-outline" size={24} color="#D96A17" />
-            <Text style={styles.quickAccessText}>LMS</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.quickAccessBtn} onPress={() => router.push("/(tabs)/targets")}>
-            <Ionicons name="target-outline" size={24} color="#D96A17" />
-            <Text style={styles.quickAccessText}>Targets</Text>
-          </TouchableOpacity>
-        </View>
       </View>
 
       {/* Logout Button */}
@@ -188,8 +162,8 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: 25,
   },
   avatar: {
-    width: 90, 
-    height: 90, 
+    width: 70, 
+    height: 70, 
     borderRadius: 45,
     backgroundColor: "#E67821",
     justifyContent: "center", 
@@ -202,9 +176,9 @@ const styles = StyleSheet.create({
   },
   name: { 
     color: "#fff", 
-    fontSize: 24, 
+    fontSize: 22, 
     fontWeight: "bold", 
-    marginTop: 15 
+    marginTop: 12 
   },
   designation: { 
     color: "#D7DFEA", 
@@ -234,7 +208,7 @@ const styles = StyleSheet.create({
   card: {
     backgroundColor: "#fff", 
     marginHorizontal: 16, 
-    marginTop: 16,
+    marginTop: 11,
     borderRadius: 18, 
     padding: 16, 
     elevation: 3,
@@ -298,7 +272,7 @@ const styles = StyleSheet.create({
     gap: 8,
     backgroundColor: "#C0392B",
     marginHorizontal: 16,
-    marginTop: 24,
+    marginTop: 14,
     paddingVertical: 14,
     borderRadius: 14,
     elevation: 3,
