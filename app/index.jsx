@@ -33,8 +33,19 @@ export default function LoginScreen() {
 
   const checkExistingLogin = async () => {
     try {
+      const role = await AsyncStorage.getItem("role");
       const token = await AsyncStorage.getItem("userToken");
       const userData = await AsyncStorage.getItem("userData");
+
+      if (role === "fitter") {
+        router.replace("/(fitter)/attendance");
+        return;
+      }
+
+      if (role === "delivery") {
+        router.replace("/(delivery)/attendance");
+        return;
+      }
 
       if (token && userData) {
         router.replace("/(tabs)/home");
@@ -98,15 +109,14 @@ export default function LoginScreen() {
 
   // Manual Login with OnTrack API - Updated to allow login from anywhere
   const login = async () => {
-    // Validate inputs
     if (!username || !password) {
       Alert.alert("Error", "Please enter both Employee Number and Password");
       return;
     }
 
-    // Request location permissions (still needed for other features)
     const { status: fgStatus } =
       await Location.requestForegroundPermissionsAsync();
+
     if (fgStatus !== "granted") {
       Alert.alert("Permission Required", "Please allow location access.");
       return;
@@ -114,10 +124,11 @@ export default function LoginScreen() {
 
     const { status: bgStatus } =
       await Location.requestBackgroundPermissionsAsync();
+
     if (bgStatus !== "granted") {
       Alert.alert(
         "Background Location Required",
-        "Please select 'Always Allow' for location to enable auto login/logout."
+        "Please select 'Always Allow' for location."
       );
       return;
     }
@@ -125,29 +136,73 @@ export default function LoginScreen() {
     try {
       setChecking(true);
 
-      // REMOVED: Location verification check
-      // Users can now login from anywhere without location restriction
+      // ==========================
+      // FITTER LOGIN
+      // ==========================
+      if (
+        username.toLowerCase() === "fitter" &&
+        password === "Password@123"
+      ) {
+        await AsyncStorage.setItem("role", "fitter");
+        await AsyncStorage.setItem("userToken", "fitter-token");
 
-      console.log("Login attempt from:", username);
+        await AsyncStorage.setItem(
+          "userData",
+          JSON.stringify({
+            name: "Fitter",
+            role: "fitter",
+          })
+        );
 
-      // Call OnTrack login API with username (employee number)
+        router.replace("/(fitter)/attendance");
+        return;
+      }
+
+      // ==========================
+      // DELIVERY LOGIN
+      // ==========================
+      if (
+        username.toLowerCase() === "delivery" &&
+        password === "Password@123"
+      ) {
+        await AsyncStorage.setItem("role", "delivery");
+        await AsyncStorage.setItem("userToken", "delivery-token");
+
+        await AsyncStorage.setItem(
+          "userData",
+          JSON.stringify({
+            name: "Delivery",
+            role: "delivery",
+          })
+        );
+
+        router.replace("/(delivery)/attendance");
+        return;
+      }
+
+      // ==========================
+      // STAFF LOGIN (EXISTING)
+      // ==========================
       const result = await authService.login(username, password);
 
       if (result.success) {
-        // Save credentials for auto-login
+        await AsyncStorage.setItem("role", "staff");
+
         await AsyncStorage.setItem(
           "savedCredentials",
           JSON.stringify({ username, password })
         );
 
         Alert.alert("Success", `Welcome ${result.user.name}!`);
+
         router.replace("/(tabs)/home");
       } else {
         Alert.alert("Login Failed", result.message);
       }
+
     } catch (error) {
       console.log(error);
-      Alert.alert("Error", "An error occurred during login. Please try again.");
+      Alert.alert("Error", "An error occurred during login.");
     } finally {
       setChecking(false);
     }
