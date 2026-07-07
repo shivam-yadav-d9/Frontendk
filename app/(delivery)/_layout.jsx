@@ -1,7 +1,21 @@
 import { Tabs } from "expo-router";
 import { MaterialIcons } from "@expo/vector-icons";
+import { useEffect, useRef } from "react";
+import deliveryLocationService from "../../services/deliveryLocation.service";
 
 export default function DeliveryLayout() {
+    const startedRef = useRef(false);
+
+    useEffect(() => {
+        if (startedRef.current) return;
+        startedRef.current = true;
+        deliveryLocationService.startTracking();
+
+        return () => {
+            deliveryLocationService.stopTracking();
+        };
+    }, []);
+
     return (
         <Tabs
             screenOptions={{
@@ -20,7 +34,6 @@ export default function DeliveryLayout() {
                     ),
                 }}
             />
-
             <Tabs.Screen
                 name="schedule"
                 options={{
@@ -30,7 +43,6 @@ export default function DeliveryLayout() {
                     ),
                 }}
             />
-
             <Tabs.Screen
                 name="profile"
                 options={{
